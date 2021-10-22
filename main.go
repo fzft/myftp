@@ -19,6 +19,7 @@ var (
 )
 
 type Auth struct {
+	need     bool
 	username string
 	password string
 }
@@ -39,12 +40,15 @@ type FtpConn struct {
 	controlWriter *bufio.Writer
 	logger        *logrus.Logger
 	closed        bool
+	auth          Auth
+	isLogin       bool
+	dataConn *FtpPassiveSocket
 }
 
 // Serve handle read buf
 func (c *FtpConn) Serve() {
 	c.logger.Infof("from %s connection established", c.conn.RemoteAddr().String())
-	c.WriteMessage(220, "welcome to myftp")
+	c.WriteMessage(StatusReadyForNewUser, "welcome to myftp")
 	for {
 		line, err := c.controlReader.ReadString('\n')
 		if err != nil {
@@ -59,6 +63,17 @@ func (c *FtpConn) Serve() {
 	}
 	c.Close()
 	c.logger.Infof("from %s connection closed", c.conn.RemoteAddr().String())
+}
+
+func (c *FtpConn) passiveListenIP() string {
+	var listenIP string
+	listenIP = c.conn.LocalAddr().(*net.TCPAddr).IP.String()
+
+	lastIdx := strings.LastIndex(listenIP, ":")
+	if lastIdx <= 0 {
+		return listenIP
+	}
+	return listenIP[:lastIdx]
 }
 
 func (c *FtpConn) WriteMessage(code int, message string) (int, error) {
@@ -79,11 +94,24 @@ func (c *FtpConn) Close() {
 func (c *FtpConn) receiveLine(line string) {
 	command, params := c.parseLine(line)
 	c.logger.Infof("command %s, params %s\n", command, params)
-	c.WriteMessage(220, "ok, next")
+	commandObj := commands[command]
+	if commandObj == nil {
+		c.WriteMessage(StatusUnrecognizedCommand, "command unrecognized")
+		return
+	}
+	// validate auth required
+	if commandObj.AuthRequired() && c.isLogin == false {
+		c.WriteMessage(StatusNotLogin, "Not logged in.")
+		return
+	}
+	commandObj.Execute(c, params)
 }
 
 func (c *FtpConn) parseLine(line string) (string, string) {
-	params := strings.SplitN(line, " ", 2)
+	params := strings.SplitN(strings.Trim(line, "\r\n"), " ", 2)
+	if len(params) == 1 {
+		return params[0], ""
+	}
 	return params[0], params[1]
 }
 
@@ -94,6 +122,7 @@ func NewServer(host, port string, logger *logrus.Logger, ctx context.Context, ca
 		ctx:    ctx,
 		cancel: cancel,
 		auth: Auth{
+			need:     true,
 			username: "mos",
 			password: "mos",
 		},
@@ -120,19 +149,20 @@ func (s *Server) Serve() (err error) {
 					continue
 				}
 			}
-			ftpConn := s.NewConn(tcpConn, s.logger)
+			ftpConn := s.NewConn(tcpConn, s.logger, s.auth)
 			go ftpConn.Serve()
 		}
 	}()
 	return nil
 }
 
-func (s *Server) NewConn(conn net.Conn, logger *logrus.Logger) *FtpConn {
+func (s *Server) NewConn(conn net.Conn, logger *logrus.Logger, auth Auth) *FtpConn {
 	return &FtpConn{
 		conn:          conn,
 		logger:        logger,
 		controlReader: bufio.NewReader(conn),
 		controlWriter: bufio.NewWriter(conn),
+		auth:          auth,
 	}
 }
 
