@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 )
@@ -42,7 +43,10 @@ type FtpConn struct {
 	closed        bool
 	auth          Auth
 	isLogin       bool
-	dataConn *FtpPassiveSocket
+	dataConn      *FtpPassiveSocket
+	dir           string
+	driver *Driver
+	appendData bool
 }
 
 // Serve handle read buf
@@ -81,6 +85,11 @@ func (c *FtpConn) WriteMessage(code int, message string) (int, error) {
 	wrote, err := c.controlWriter.WriteString(line)
 	c.controlWriter.Flush()
 	return wrote, err
+}
+
+func (c *FtpConn) buildPath(filename string) string {
+	fullPath := filepath.Clean("." + "/" + filename)
+	return fullPath
 }
 
 func (c *FtpConn) Close() {
@@ -163,6 +172,11 @@ func (s *Server) NewConn(conn net.Conn, logger *logrus.Logger, auth Auth) *FtpCo
 		controlReader: bufio.NewReader(conn),
 		controlWriter: bufio.NewWriter(conn),
 		auth:          auth,
+		driver: &Driver{
+			rootPath: "/Users/fangzhenfutao/go/src/github.com/fzft/myftp",
+		},
+		appendData: false,
+
 	}
 }
 
@@ -180,7 +194,7 @@ func (s *Server) Shutdown() error {
 func main() {
 	logger := logrus.New()
 	host := "127.0.0.1"
-	port := "8080"
+	port := "8081"
 
 	term := make(chan os.Signal)
 	stopCh := make(chan struct{})
