@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"github.com/fzft/myftp/internal"
 	"github.com/sirupsen/logrus"
 	"io"
 	"net"
@@ -45,8 +46,14 @@ type FtpConn struct {
 	isLogin       bool
 	dataConn      *FtpPassiveSocket
 	dir           string
-	driver *Driver
-	appendData bool
+	driver        *Driver
+	appendData    bool
+
+	// event loop attr
+	fd   int
+	sa   syscall.Sockaddr
+	loop *Loop
+	out  []byte // write buffer
 }
 
 // Serve handle read buf
@@ -144,24 +151,34 @@ func (s *Server) Serve() (err error) {
 		return
 	}
 	s.logger.Infof("ftp server listening on %s", s.addr)
-	go func() {
-		for {
-			tcpConn, err := s.ln.Accept()
-			if err != nil {
-				select {
-				case <-s.ctx.Done():
-					return
-				default:
-				}
-				// TODO close
-				if ne, ok := err.(net.Error); ok && ne.Temporary() {
-					continue
-				}
-			}
-			ftpConn := s.NewConn(tcpConn, s.logger, s.auth)
-			go ftpConn.Serve()
-		}
-	}()
+	//go func() {
+	//	for {
+	//		tcpConn, err := s.ln.Accept()
+	//		if err != nil {
+	//			select {
+	//			case <-s.ctx.Done():
+	//				return
+	//			default:
+	//			}
+	//			// TODO close
+	//			if ne, ok := err.(net.Error); ok && ne.Temporary() {
+	//				continue
+	//			}
+	//		}
+	//		ftpConn := s.NewConn(tcpConn, s.logger, s.auth)
+	//		go ftpConn.Serve()
+	//	}
+	//}()
+
+	// use event loop
+	l := &Loop{
+		poll:    internal.OpenPoll(),
+		packet:  make([]byte, 0xFFFF),
+		fdconns: make(map[int]*FtpConn),
+	}
+
+	go l.Run()
+
 	return nil
 }
 
@@ -176,7 +193,6 @@ func (s *Server) NewConn(conn net.Conn, logger *logrus.Logger, auth Auth) *FtpCo
 			rootPath: "/Users/fangzhenfutao/go/src/github.com/fzft/myftp",
 		},
 		appendData: false,
-
 	}
 }
 
