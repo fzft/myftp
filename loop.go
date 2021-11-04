@@ -4,15 +4,15 @@ import (
 	"fmt"
 	"github.com/fzft/myftp/internal"
 	"github.com/sirupsen/logrus"
-	"strings"
 	"syscall"
 )
 
 type Loop struct {
-	fdconns map[int]*FtpConn // fd -> conn
-	poll    *internal.Poll
-	packet  []byte
-	log  *logrus.Logger
+	fdconns      map[int]*FtpConn // fd -> conn
+	poll         *internal.Poll
+	packet       []byte
+	log          *logrus.Logger
+	eventHandler Event
 }
 
 //Run ...
@@ -47,6 +47,7 @@ func (l *Loop) Accept(fd int) error {
 	c.out = nil
 	l.fdconns[c.fd] = c
 	l.poll.AddReadWrite(c.fd)
+	c.out = []byte(fmt.Sprintf("%d %s\n", StatusReadyForNewUser, "welcome to myftp"))
 	return nil
 }
 
@@ -78,7 +79,6 @@ func (l *Loop) Write(c *FtpConn) error {
 
 //Read ...
 func (l *Loop) Read(c *FtpConn) error {
-	l.log.Infof("read")
 	var in []byte
 	n, err := syscall.Read(c.fd, l.packet)
 	if n == 0 || err != nil {
@@ -87,15 +87,11 @@ func (l *Loop) Read(c *FtpConn) error {
 		}
 		return l.CloseConn(c)
 	}
+	l.log.Infof("read %d bytes", n)
 	in = l.packet[:n]
 
-	Data := func(in []byte) (out []byte) {
-		fmt.Printf("%s\n", strings.TrimSpace(string(in)))
-		out = in
-		return
-	}
-
-	out := Data(in)
+	out, action := l.eventHandler.OnData(c, in)
+	c.action = action
 	if len(out) > 0 {
 		c.out = append(c.out[:0], out...)
 	}

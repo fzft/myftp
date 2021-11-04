@@ -33,6 +33,8 @@ type Server struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	auth   Auth
+	f *os.File
+	fd int
 }
 
 //FtpConn override net.Conn
@@ -54,6 +56,7 @@ type FtpConn struct {
 	sa   syscall.Sockaddr
 	loop *Loop
 	out  []byte // write buffer
+	action Action
 }
 
 // Serve handle read buf
@@ -120,7 +123,7 @@ func (c *FtpConn) receiveLine(line string) {
 		c.WriteMessage(StatusNotLogin, "Not logged in.")
 		return
 	}
-	commandObj.Execute(c, params)
+	//commandObj.Execute(c, params)
 }
 
 func (c *FtpConn) parseLine(line string) (string, string) {
@@ -143,6 +146,20 @@ func NewServer(host, port string, logger *logrus.Logger, ctx context.Context, ca
 			password: "mos",
 		},
 	}
+}
+
+func (s *Server) system() error {
+	var err error
+	switch netln := s.ln.(type) {
+	case *net.TCPListener:
+		s.f, err = netln.File()
+	}
+	if err != nil {
+		s.Shutdown()
+		return err
+	}
+	s.fd = int(s.f.Fd())
+	return syscall.SetNonblock(s.fd, true)
 }
 
 func (s *Server) Serve() (err error) {
@@ -170,13 +187,21 @@ func (s *Server) Serve() (err error) {
 	//	}
 	//}()
 
+	s.system()
 	// use event loop
 	l := &Loop{
 		poll:    internal.OpenPoll(),
 		packet:  make([]byte, 0xFFFF),
 		fdconns: make(map[int]*FtpConn),
+		log: s.logger,
+		eventHandler: &FtpEventHandler{
+			logger: s.logger,
+			auth: s.auth,
+		},
 	}
 
+	// fd bind
+	l.poll.AddRead(s.fd)
 	go l.Run()
 
 	return nil

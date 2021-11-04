@@ -7,7 +7,7 @@ import (
 )
 
 type Command interface {
-	Execute(*FtpConn, string)
+	Execute(*FtpEventHandler, string) ([]byte, error)
 	ParamsRequired() bool
 	AuthRequired() bool
 }
@@ -20,9 +20,9 @@ var (
 		"PASS": CommandPass{},
 		"QUIT": CommandQuit{},
 		"TYPE": CommandType{},
-		"EPSV": CommandEPSV{},
-		"PASV": CommandPASV{},
-		"STOR": CommandSTOR{},
+		//"EPSV": CommandEPSV{},
+		//"PASV": CommandPASV{},
+		//"STOR": CommandSTOR{},
 	}
 )
 
@@ -36,19 +36,18 @@ func (cmd CommandUser) AuthRequired() bool {
 	return false
 }
 
-func (cmd CommandUser) Execute(conn *FtpConn, param string) {
-	if conn.auth.need {
-		if conn.auth.username == param {
+func (cmd CommandUser) Execute(e *FtpEventHandler, param string) ([]byte, error) {
+	if e.auth.need {
+		if e.auth.username == param {
 			// username validate ok
-			conn.WriteMessage(StatusUsernameOK, "User name okay, need password.")
-			return
+			return e.WriteMessage(StatusUsernameOK, "User name okay, need password.")
 		} else {
 			// username invalid
-			conn.WriteMessage(StatusInvalidUsernameOrPass, "Invalid username or password")
-			return
+
+			return e.WriteMessage(StatusInvalidUsernameOrPass, "Invalid username or password")
 		}
 	} else {
-		conn.WriteMessage(StatusActionSuccessfully, "The requested action has been successfully completed.")
+		return e.WriteMessage(StatusActionSuccessfully, "The requested action has been successfully completed.")
 	}
 }
 
@@ -62,16 +61,17 @@ func (cmd CommandPass) AuthRequired() bool {
 	return false
 }
 
-func (cmd CommandPass) Execute(conn *FtpConn, param string) {
-	if conn.auth.need {
-		if conn.auth.password == param {
-			conn.WriteMessage(StatusUserLogin, "User logged in")
-			conn.isLogin = true
+func (cmd CommandPass) Execute(e *FtpEventHandler, param string) ([]byte, error) {
+	if e.auth.need {
+		if e.auth.password == param {
+			e.isLogin = true
+			return e.WriteMessage(StatusUserLogin, "User logged in")
+
 		} else {
-			conn.WriteMessage(StatusInvalidUsernameOrPass, "Invalid username or password")
+			return e.WriteMessage(StatusInvalidUsernameOrPass, "Invalid username or password")
 		}
 	} else {
-
+		return []byte(""), nil
 	}
 }
 
@@ -85,9 +85,8 @@ func (cmd CommandQuit) AuthRequired() bool {
 	return true
 }
 
-func (cmd CommandQuit) Execute(conn *FtpConn, param string) {
-	conn.WriteMessage(StatusServiceClosing, "bye")
-	conn.Close()
+func (cmd CommandQuit) Execute(e *FtpEventHandler, param string) ([]byte, error) {
+	return e.WriteMessage(StatusServiceClosing, "bye")
 }
 
 type CommandType struct {
@@ -100,12 +99,13 @@ func (cmd CommandType) AuthRequired() bool {
 	return false
 }
 
-func (cmd CommandType) Execute(conn *FtpConn, param string) {
+func (cmd CommandType) Execute(e *FtpEventHandler, param string) ([]byte, error) {
 	if strings.ToUpper(param) == "A" {
-		conn.WriteMessage(StatusActionSuccessfully, "Type set to ASCII")
+		return e.WriteMessage(StatusActionSuccessfully, "Type set to ASCII")
 	} else if strings.ToUpper(param) == "I" {
-		conn.WriteMessage(StatusActionSuccessfully, "Type set to binary")
+		return e.WriteMessage(StatusActionSuccessfully, "Type set to binary")
 	} else {
+		return []byte(""), nil
 	}
 }
 
@@ -119,20 +119,19 @@ func (cmd CommandEPSV) AuthRequired() bool {
 	return true
 }
 
-func (cmd CommandEPSV) Execute(conn *FtpConn, param string) {
-	lnIp := conn.passiveListenIP()
-	socket, err := NewFtpPassiveSocket(lnIp)
-	if err != nil {
-		fmt.Println("err", err)
-		conn.WriteMessage(StatusCannotOpenDataConnection, "Can't open data connection.")
-		return
-	}
-	conn.dataConn = socket
-	target := fmt.Sprintf("(%d)", socket.Port())
-	msg := "Entering Extended Passive Mode " + target
-	conn.logger.Infof("epsv response: %s", msg)
-	conn.WriteMessage(StatusEnterExtendedPassiveMode, msg)
-}
+//func (cmd CommandEPSV) Execute(conn *FtpConn, param string) {
+//	lnIp := conn.passiveListenIP()
+//	socket, err := NewFtpPassiveSocket(lnIp)
+//	if err != nil {
+//		 conn.WriteMessage(StatusCannotOpenDataConnection, "Can't open data connection.")
+//
+//	}
+//	conn.dataConn = socket
+//	target := fmt.Sprintf("(%d)", socket.Port())
+//	msg := "Entering Extended Passive Mode " + target
+//	conn.logger.Infof("epsv response: %s", msg)
+//	conn.WriteMessage(StatusEnterExtendedPassiveMode, msg)
+//}
 
 type CommandPASV struct {
 }
@@ -188,4 +187,3 @@ func (cmd CommandSTOR) Execute(conn *FtpConn, param string) {
 		conn.WriteMessage(StatusFileActionNotTaken, fmt.Sprint("error during transfer: ", err))
 	}
 }
-

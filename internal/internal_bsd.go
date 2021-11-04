@@ -35,12 +35,14 @@ func OpenPoll() *Poll {
 func (p *Poll) Wait(iter func(fd int) error) error {
 	events := make([]syscall.Kevent_t, 128)
 	for {
+		// listener fd
 		n, err := syscall.Kevent(p.fd, p.changes, events, nil)
 		if err != nil && err != syscall.EINTR {
 			return err
 		}
 		p.changes = p.changes[:0]
 		for i := 0; i < n; i++ {
+			// connection fd
 			if fd := int(events[i].Ident); fd != 0 {
 				if err := iter(fd); err != nil {
 					return err
